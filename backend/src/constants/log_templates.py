@@ -9,5 +9,6 @@ ACTIONS: dict[str, str] = {
     "run.complete": "归因计算完成",
     "attribution.review": "复核归因结果",
     "export.attributions": "导出归因与预算建议",
+    "identity.merge": "受理身份合并",
     "http.mutation": "写请求",
 }

@@ -20,6 +20,7 @@ PERMISSIONS: dict[str, set[str]] = {
         "overview:read",
         "channel:read", "channel:write",
         "touchpoint:read", "conversion:read",
+        "identity:read", "identity:write",
         "run:read", "run:create",
         "attribution:read", "attribution:review",
         "plan:read", "export:read", "audit:read",
@@ -28,18 +29,20 @@ PERMISSIONS: dict[str, set[str]] = {
         "overview:read",
         "channel:read",
         "touchpoint:read", "conversion:read",
+        "identity:read", "identity:write",
         "run:read", "run:create",
         "attribution:read", "attribution:review",
         "plan:read",
     },
     Role.VIEWER.value: {
-        "overview:read", "channel:read", "run:read", "attribution:read", "plan:read",
+        "overview:read", "channel:read", "identity:read", "run:read", "attribution:read", "plan:read",
     },
 }
 
 CHANNEL_WRITE_ROLES = (Role.ADMIN.value,)
 RUN_CREATE_ROLES = (Role.ADMIN.value, Role.ANALYST.value)
 REVIEW_ROLES = (Role.ADMIN.value, Role.ANALYST.value)
+MERGE_WRITE_ROLES = (Role.ADMIN.value, Role.ANALYST.value)
 EXPORT_ROLES = (Role.ADMIN.value,)
 AUDIT_ROLES = (Role.ADMIN.value,)
 READ_ROLES = (Role.ADMIN.value, Role.ANALYST.value, Role.VIEWER.value)

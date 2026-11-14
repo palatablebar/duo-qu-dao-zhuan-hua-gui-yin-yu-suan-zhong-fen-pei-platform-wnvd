@@ -19,10 +19,11 @@ export const BRAND = {
 export const NAV = [
   { to: '#/overview', no: '01', label: '总览', permission: 'overview:read' },
   { to: '#/channels', no: '02', label: '渠道与预算', permission: 'channel:read' },
-  { to: '#/runs', no: '03', label: '归因运行', permission: 'run:read' },
-  { to: '#/attributions', no: '04', label: '渠道对比', permission: 'attribution:read' },
-  { to: '#/plan', no: '05', label: '预算建议', permission: 'plan:read' },
-  { to: '#/audit', no: '06', label: '审计日志', permission: 'audit:read' },
+  { to: '#/identity', no: '03', label: '身份合并', permission: 'identity:read' },
+  { to: '#/runs', no: '04', label: '归因运行', permission: 'run:read' },
+  { to: '#/attributions', no: '05', label: '渠道对比', permission: 'attribution:read' },
+  { to: '#/plan', no: '06', label: '预算建议', permission: 'plan:read' },
+  { to: '#/audit', no: '07', label: '审计日志', permission: 'audit:read' },
 ];
 
 export const ROLE_LABELS = {
@@ -32,9 +33,9 @@ export const ROLE_LABELS = {
 };
 
 export const PERMISSIONS = {
-  admin: ['overview:read', 'channel:read', 'channel:write', 'run:read', 'run:create', 'attribution:read', 'attribution:review', 'plan:read', 'export:read', 'audit:read'],
-  analyst: ['overview:read', 'channel:read', 'run:read', 'run:create', 'attribution:read', 'attribution:review', 'plan:read'],
-  viewer: ['overview:read', 'channel:read', 'run:read', 'attribution:read', 'plan:read'],
+  admin: ['overview:read', 'channel:read', 'channel:write', 'identity:read', 'identity:write', 'run:read', 'run:create', 'attribution:read', 'attribution:review', 'plan:read', 'export:read', 'audit:read'],
+  analyst: ['overview:read', 'channel:read', 'identity:read', 'identity:write', 'run:read', 'run:create', 'attribution:read', 'attribution:review', 'plan:read'],
+  viewer: ['overview:read', 'channel:read', 'identity:read', 'run:read', 'attribution:read', 'plan:read'],
 };
 
 export const ENUMS = {
@@ -43,6 +44,15 @@ export const ENUMS = {
   runStatus: { queued: '排队中', running: '执行中', success: '成功', partial: '部分成功', failed: '失败' },
   review: { pending: '待复核', confirmed: '已确认', dismissed: '已驳回' },
   trigger: { manual: '手动', schedule: '定时', seed: '初始化' },
+  mergeStatus: { accepted: '已受理', conflict: '冲突', failed: '失败' },
+  mergeReason: {
+    link_created: '新建设备关联',
+    link_exists: '同会员重复关联，未新增',
+    device_bound_to_other_member: '设备已关联其他会员，保留先到关联',
+    invalid_event_key: '事件号缺失或格式不合法',
+    invalid_device_id: '设备号缺失或格式不合法',
+    invalid_member_id: '会员号缺失或格式不合法',
+  },
 };
 
 export function can(role, permission) {
@@ -55,6 +65,10 @@ export function runTone(status) {
 
 export function reviewTone(status) {
   return { pending: 'pending warn', confirmed: 'ok', dismissed: 'danger' }[status] || 'info';
+}
+
+export function mergeTone(status) {
+  return { accepted: 'ok', conflict: 'warn', failed: 'danger' }[status] || 'info';
 }
 
 export function pct(value, digits = 1) {

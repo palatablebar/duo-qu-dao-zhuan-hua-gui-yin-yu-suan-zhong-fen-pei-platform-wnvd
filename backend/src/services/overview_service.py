@@ -13,7 +13,7 @@ from src.models.attribution_run import AttributionRun
 from src.models.channel import Channel
 from src.models.conversion import Conversion
 from src.models.touchpoint import Touchpoint
-from src.services import attribution_service, algorithms
+from src.services import algorithms, attribution_service, identity_service
 from src.utils.timeutil import local_now, utcnow
 
 
@@ -36,11 +36,18 @@ def _live_summary(db: Session) -> dict:
     touchpoints = db.scalars(select(Touchpoint).order_by(Touchpoint.touched_at, Touchpoint.id)).all()
     conversions = db.scalars(select(Conversion)).all()
     rows = [
-        {"user_id": row.user_id, "channel_code": code_by_id.get(row.channel_id, ""), "touched_at": row.touched_at.isoformat()}
+        {
+            "user_id": row.user_id,
+            "device_id": row.device_id,
+            "channel_code": code_by_id.get(row.channel_id, ""),
+            "touched_at": row.touched_at.isoformat(),
+        }
         for row in touchpoints
         if row.channel_id in code_by_id
     ]
-    journeys = algorithms.build_journeys(rows, [{"user_id": row.user_id, "amount": row.amount} for row in conversions])
+    cv_rows = [{"user_id": row.user_id, "device_id": row.device_id, "amount": row.amount} for row in conversions]
+    links = identity_service.load_links(db)
+    journeys = algorithms.build_journeys(rows, cv_rows, links)
     codes = [channel.code for channel in channels]
     return algorithms.summarize(journeys, codes) if codes else {"path_length": [], "markov_share": {}, "last_click_share": {}}
 

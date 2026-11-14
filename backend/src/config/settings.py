@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     app_name: str = "mixcredit"
     app_title: str = "多渠道转化归因与预算重分配台"
 
-    db_kind: str = "postgres"  # postgres | mysql
+    db_kind: str = "postgres"  # postgres | mysql | sqlite（sqlite 仅本地测试）
     db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "mixcredit"
@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        if self.db_kind == "sqlite":
+            return "sqlite:///:memory:"
         if self.db_kind == "mysql":
             return (
                 f"mysql+pymysql://{self.db_user}:{self.db_password}"

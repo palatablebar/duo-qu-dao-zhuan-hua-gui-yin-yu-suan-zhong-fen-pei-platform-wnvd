@@ -10,14 +10,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.config.settings import settings
 
-engine = create_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-    pool_size=8,
-    max_overflow=16,
-    pool_recycle=1800,
-    future=True,
-)
+_engine_options: dict = {"pool_pre_ping": True, "future": True}
+if settings.db_kind == "sqlite":
+    # SQLite（仅本地测试）使用内存库与 StaticPool，让多个 session 共享同一连接
+    from sqlalchemy.pool import StaticPool
+
+    _engine_options = {"connect_args": {"check_same_thread": False}, "poolclass": StaticPool}
+else:
+    _engine_options.update({"pool_size": 8, "max_overflow": 16, "pool_recycle": 1800})
+
+engine = create_engine(settings.database_url, **_engine_options)
+
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
 

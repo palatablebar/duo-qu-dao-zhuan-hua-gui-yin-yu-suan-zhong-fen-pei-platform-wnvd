@@ -1,13 +1,13 @@
 # 多渠道转化归因与预算重分配台（`mixcredit`）
 
-> 数据工程 · 数据分析与数据应用（多触点归因 + 预算优化）。原生 HTML/CSS/JS 前端 + FastAPI + Celery + MySQL 8.0 + Redis，5 容器一键起。
+> 数据工程 · 数据分析与数据应用（设备 × 会员身份合并 + 多触点归因 + 预算优化）。原生 HTML/CSS/JS 前端 + FastAPI + Celery + MySQL 8.0 + Redis，5 容器一键起。
 
 ## 1. 场景
 
 - **模拟客户**：清野日化（DTC 家清品牌）增长组 6 人，月投放 80 万，5 个渠道：品牌搜索、效果信息流、内容种草、私域社群、达人直播。
 - **现有工作流**：各平台后台导出投放/埋点明细 → Excel 里按 last-click 拆账 → 周会上拍脑袋调预算。
 - **三个痛点**：① 低估种草渠道（内容大多首触、末跳很少）；② 渠道重叠无法去重；③ 预算分配没有可解释依据。
-- **上下游**：投放平台/埋点导出（触点、订单）→ 本系统（路径构建 → 马尔可夫归因 → ROI → 预算建议）→ 增长组与代理公司复核、导出 CSV。
+- **上下游**：投放平台/埋点导出（触点、订单，带设备号）→ 身份合并（设备 × 会员关联）→ 本系统（路径构建 → 马尔可夫归因 → ROI → 预算建议）→ 增长组与代理公司复核、导出 CSV。
 - **一天的工作剧本**：09:40 分析师导入 10 月触点与订单（2,400 用户 / 8,600 触点 / 640 转化）→ 发起归因运行 → 总览看到整体转化率 26.67% 与路径长度分布 → 渠道对比发现内容种草 last-click 11.72% / 马尔可夫 23.05% → 预算建议页看到内容 +18.17%、品牌搜索 +30%（触顶）、达人直播 −30%（触底）→ 复核 5 条归因 → 管理员导出 `attributions.csv` → 审计里回查谁改过预算。
 
 ## 2. 角色与权限
@@ -16,7 +16,7 @@
 |---|---|---|---|
 | 增长管理员 `admin` | `admin@mixcredit.io` | 渠道写 + 运行 + 复核 + 导出 + 审计 | 改渠道预算、导出归因 CSV、查看审计 |
 | 归因分析师 `analyst` | `analyst@mixcredit.io` | 运行 + 复核 + 读 | 发起归因、提交复核结论 |
-| 渠道只读 `viewer` | `viewer@mixcredit.io` | 只读结果（成本明细隐藏） | 看总览/渠道对比/预算建议，不能复核与导出 |
+| 渠道只读 `viewer` | `viewer@mixcredit.io` | 只读结果（成本明细隐藏） | 看总览/身份合并/渠道对比/预算建议，不能提交合并、复核与导出 |
 
 密码统一 `Demo@2026`。低权角色调用高权接口返回 **403**（真实 HTTP 状态）；无 token 返回 **401**；非法参数 **422**；重复渠道编码 **409**。viewer 的成本、ROI、建议预算字段由后端置空（`costs_hidden: true`），不是前端隐藏。
 
@@ -24,9 +24,10 @@
 
 1. **渠道与预算**（`/api/channels`）：5 个渠道的月度成本/预算/负责人维护，admin 可改，viewer 成本字段隐藏。
 2. **归因运行**（`/api/attribution-runs`）：选择期间与口径，服务端重建路径并计算马尔可夫移除效应 + 精确 Shapley，落 5 条 Attribution；`/api/attribution-runs/{id}/plan` 返回预算方案。
-3. **渠道对比**（`/api/attributions`）：last-click / 马尔可夫 / Shapley 三口径并列；analyst 与 admin 复核（pending/confirmed/dismissed）。
-4. **预算建议与导出**：当前预算 vs 建议预算、变动幅度、ROI；`/api/exports/attributions.csv` 导出（UTF-8 BOM，5 行）。
-5. **审计与心跳**：登录、改预算、发起运行、复核、导出全量审计；Celery beat 每 10s 写 worker 心跳，总览展示在岗状态。
+3. **身份合并**（`/api/identity-merges`）：匿名设备与登录会员的关联受理，重试幂等、同设备双会员标记冲突、非法事件计失败；页面展示每次受理的受理/冲突/失败数量与合并前后用户数、触点数、渠道占比。
+4. **渠道对比**（`/api/attributions`）：last-click / 马尔可夫 / Shapley 三口径并列；analyst 与 admin 复核（pending/confirmed/dismissed）。
+5. **预算建议与导出**：当前预算 vs 建议预算、变动幅度、ROI；`/api/exports/attributions.csv` 导出（UTF-8 BOM，5 行）。
+6. **审计与心跳**：登录、改预算、身份合并、发起运行、复核、导出全量审计；Celery beat 每 10s 写 worker 心跳，总览展示在岗状态。
 
 ## 4. 快速启动
 
@@ -46,6 +47,7 @@ docker compose exec -T backend python -m pytest tests -q
 | 后端 API 文档 | http://localhost:19207/docs |
 | 健康检查 | http://localhost:19207/api/health |
 | 数据库映射 | localhost:17707 |
+| 身份合并 API | http://localhost:19207/api/identity-merges |
 
 ## 6. 技术栈
 
@@ -60,6 +62,16 @@ docker compose exec -T backend python -m pytest tests -q
 ## 7. 核心算法与口径
 
 算法位于 `backend/src/services/algorithms.py`（纯函数、无 IO、确定性；单测 `backend/tests/test_algorithms.py`）。
+身份合并规则位于 `backend/src/services/identity_rules.py`（同样纯函数，单测 `backend/tests/test_identity_rules.py`）。
+
+### 算法 0｜设备 × 会员身份合并
+
+1. 合并事件按 `arrived_at`（同一时刻再按 `event_key`）排序处理；设备首条合法事件建立 `device -> member` 关联。
+2. 同一设备后续绑定**同一会员**记 `link_exists`：受理但不新增关联；同一 `event_key` 重试在入库层直接跳过（`duplicate`），不新增关联、不重复计触点。
+3. 同一设备后续绑定**另一个会员**记 `conflict`：保留先到关联，单独标出被拒绝的会员与建立关联的事件号，不覆盖。
+4. `event_key` / 设备号 / 会员号缺失或格式非法记 `failed`，不参与关联。
+5. 归因主体 = `links[device_id]`（有设备关联时）否则原 `user_id`；新建关联的设备上同渠道同一时刻的重复触点只保留一条。历史明细（`user_id`、`device_id`）不改写，旧运行快照原样保留。
+6. 合并后口径只影响**下一次**运行：`metrics.identity` 与运行日志同时给出 `before/after` 用户数、触点数、转化率与渠道占比。
 
 ### 算法 A｜路径 + 马尔可夫移除效应
 
@@ -86,17 +98,20 @@ docker compose exec -T backend python -m pytest tests -q
 | 归因口径 `markov/last_click/shapley` | `backend/src/constants/enums.py` | `frontend/site/js/config.js`（`ENUMS.model`） |
 | 复核状态 `pending/confirmed/dismissed` | `backend/src/constants/enums.py` | `frontend/site/js/config.js`（`ENUMS.review`） |
 | 运行状态 `queued/running/success/partial/failed` | `backend/src/constants/enums.py` | `frontend/site/js/config.js`（`ENUMS.runStatus`） |
+| 合并结果 `accepted/conflict/failed` 与原因码 | `backend/src/services/identity_rules.py` | `frontend/site/js/config.js`（`ENUMS.mergeStatus` / `ENUMS.mergeReason`） |
 
 ## 9. 目录
 
 ```text
 backend/
   src/{config,constants,controllers,middlewares,models,routes,schemas,services,utils}
-      services/algorithms.py        # 两个纯函数算法
+      services/algorithms.py        # 两个纯函数算法（路径按 device -> member 重建）
+      services/identity_rules.py    # 身份合并规则（纯函数）
+      services/identity_service.py  # 合并受理/去重/冲突/快照
       services/attribution_service.py  # 编排/落库/预算方案
   scripts/{business_seed.py,seed_demo.py,demo_config.py,worker_healthcheck.sh}
   migrations/001_core_tables.sql
-  tests/{test_algorithms.py,test_security.py}
+  tests/{test_algorithms.py,test_security.py,test_identity_rules.py,test_identity_service.py}
 frontend/
   site/{index.html,css/{tokens,app}.css,js/{config,api,store,ui,app}.js,js/pages/*.js}
 ```
@@ -110,7 +125,8 @@ frontend/
 - 5 个服务：`frontend`(Nginx 静态站) / `backend`(uvicorn) / `worker`(Celery) / `db`(MySQL 8.0) / `redis`，全部带 healthcheck。
 - 命名卷 `db_data`、`redis_data`；`depends_on` 使用 `service_healthy`。
 - Nginx：`location /api/ { proxy_pass http://backend:8000/; }` + SPA 回落。
-- seed 幂等：用户按 email、渠道按 code、触点/转化按唯一 seed_key、运行按 seed_key；已存在即复用，不覆盖复核状态。
+- seed 幂等：用户按 email、渠道按 code、触点/转化按唯一 seed_key、身份合并按 batch_key、运行按 seed_key；已存在即复用，不覆盖复核状态。
+- 演示数据含 192 个「匿名浏览 → 登录」会员（合并前 2,592 条路径，合并后 2,400 条），另含 1 条设备冲突与 1 条非法事件。
 
 ## License
 

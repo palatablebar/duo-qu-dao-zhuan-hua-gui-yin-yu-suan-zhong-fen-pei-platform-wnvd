@@ -15,6 +15,7 @@ class Conversion(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(16), index=True)
+    device_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     amount: Mapped[float] = mapped_column(Float, default=0.0)
     converted_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     order_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)

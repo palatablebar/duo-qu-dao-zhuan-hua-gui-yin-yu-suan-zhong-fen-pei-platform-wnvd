@@ -1,9 +1,10 @@
-"""幂等 seed：3 账号 / 5 渠道 / 2,400 用户 / 8,600 触点 / 640 转化 / 1 次归因运行 / 5 条 Attribution。
+"""幂等 seed：3 账号 / 5 渠道 / 2,400 会员 / 8,600 触点 / 640 转化 / 身份合并 / 归因运行。
 
 自然键 upsert：
   users.email
   channels.code
   touchpoints.seed_key / conversions.seed_key（缺失才整批写入）
+  identity_merge_batches.batch_key（存在则复用，不重复受理）
   attribution_runs.seed_key（存在则直接复用，不重算）
   audit_logs.seed_key
 
@@ -11,19 +12,22 @@
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 
 from scripts.business_seed import BRAND, CHANNELS, PERIOD, build_dataset
-from scripts.demo_config import DEMO_PASSWORD, DEMO_USERS, ORG, SEED_AUDIT, SEED_RUN_KEY
+from scripts.demo_config import DEMO_PASSWORD, DEMO_USERS, ORG, SEED_AUDIT, SEED_MERGE_KEY, SEED_RUN_KEY
 from src.config.database import session_scope
 from src.models.attribution import Attribution
 from src.models.attribution_run import AttributionRun
 from src.models.audit import AuditLog
 from src.models.channel import Channel
 from src.models.conversion import Conversion
+from src.models.identity import IdentityLink, IdentityMergeBatch, IdentityMergeEvent
 from src.models.touchpoint import Touchpoint
+from src.services import attribution_service, identity_service
 from src.models.user import User
-from src.services import attribution_service
 from src.utils.security import hash_password
 
 
@@ -73,8 +77,9 @@ def ensure_events(db) -> tuple[int, int]:
         rows = [
             {
                 "user_id": row["user_id"],
+                "device_id": row.get("device_id"),
                 "channel_id": channels[row["channel_code"]],
-                "touched_at": row["touched_at"].replace("T", " "),
+                "touched_at": datetime.fromisoformat(row["touched_at"]),
                 "cost": row["cost"],
                 "campaign": row["campaign"],
                 "seed_key": row["seed_key"],
@@ -89,8 +94,9 @@ def ensure_events(db) -> tuple[int, int]:
         rows = [
             {
                 "user_id": row["user_id"],
+                "device_id": row.get("device_id"),
                 "amount": row["amount"],
-                "converted_at": row["converted_at"].replace("T", " "),
+                "converted_at": datetime.fromisoformat(row["converted_at"]),
                 "order_no": row["order_no"],
                 "seed_key": row["seed_key"],
             }
@@ -102,6 +108,33 @@ def ensure_events(db) -> tuple[int, int]:
         db.scalar(select(func.count()).select_from(Touchpoint)) or 0,
         db.scalar(select(func.count()).select_from(Conversion)) or 0,
     )
+
+
+def ensure_identity(db) -> int:
+    """写入演示用身份合并批次（幂等：batch_key 已存在则跳过）。"""
+    dataset = build_dataset()
+    events = dataset["identity_events"]
+    if not events:
+        return 0
+    identity_service.merge(
+        db,
+        events=[
+            {
+                "event_key": row["event_key"],
+                "device_id": row["device_id"],
+                "member_id": row["member_id"],
+                "anonymous_user_id": row.get("anonymous_user_id"),
+                "arrived_at": row.get("arrived_at"),
+            }
+            for row in events
+        ],
+        operator_email="analyst@mixcredit.io",
+        source="seed",
+        note="演示：匿名浏览 → 登录的设备关联（含 1 条设备冲突与 1 条非法事件）",
+        batch_key=SEED_MERGE_KEY,
+    )
+    db.flush()
+    return db.scalar(select(func.count()).select_from(IdentityMergeBatch)) or 0
 
 
 def ensure_run(db) -> int:
@@ -143,13 +176,20 @@ def seed_all() -> dict:
         sources = ensure_channels(db)
         db.flush()
         ensure_events(db)
+        ensure_identity(db)
         runs = ensure_run(db)
         ensure_audit(db)
         findings = db.scalar(select(func.count()).select_from(Attribution)) or 0
         pending = db.scalar(select(func.count()).select_from(Attribution).where(Attribution.status == "pending")) or 0
+        merges = db.scalar(select(func.count()).select_from(IdentityMergeBatch)) or 0
+        links = db.scalar(select(func.count()).select_from(IdentityLink)) or 0
+        conflicts = db.scalar(
+            select(func.count()).select_from(IdentityMergeEvent).where(IdentityMergeEvent.status == "conflict")
+        ) or 0
         summary = (
             f"SEED_SUMMARY brand={BRAND} users={users} sources={sources} "
-            f"runs={runs} findings={findings} pending={pending}"
+            f"runs={runs} findings={findings} pending={pending} "
+            f"merges={merges} links={links} conflicts={conflicts}"
         )
         print(summary, flush=True)
         return {
@@ -158,6 +198,9 @@ def seed_all() -> dict:
             "runs": runs,
             "findings": findings,
             "pending": pending,
+            "merges": merges,
+            "links": links,
+            "conflicts": conflicts,
         }
 
 

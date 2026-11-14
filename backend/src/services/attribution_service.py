@@ -19,7 +19,7 @@ from src.models.attribution_run import AttributionRun
 from src.models.channel import Channel
 from src.models.conversion import Conversion
 from src.models.touchpoint import Touchpoint
-from src.services import algorithms
+from src.services import algorithms, identity_service
 from src.utils.errors import AppError
 from src.utils.timeutil import iso_utc, local_now, utcnow
 
@@ -100,14 +100,24 @@ def execute_run(db: Session, run: AttributionRun) -> AttributionRun:
     touchpoints = db.scalars(select(Touchpoint).order_by(Touchpoint.touched_at, Touchpoint.id)).all()
     conversions = db.scalars(select(Conversion).order_by(Conversion.converted_at)).all()
     tp_rows = [
-        {"user_id": row.user_id, "channel_code": code_by_id.get(row.channel_id, ""), "touched_at": row.touched_at.isoformat()}
+        {
+            "user_id": row.user_id,
+            "device_id": row.device_id,
+            "channel_code": code_by_id.get(row.channel_id, ""),
+            "touched_at": row.touched_at.isoformat(),
+        }
         for row in touchpoints
         if row.channel_id in code_by_id
     ]
-    cv_rows = [{"user_id": row.user_id, "amount": row.amount} for row in conversions]
+    cv_rows = [{"user_id": row.user_id, "device_id": row.device_id, "amount": row.amount} for row in conversions]
     codes = [channel.code for channel in channels]
-    journeys = algorithms.build_journeys(tp_rows, cv_rows)
+    # 身份合并后口径：先用「合并前」的原始 user_id 建路径，再按 device -> member 关联重建，
+    # 两次结果都留在 metrics 里，历史明细（user_id / device_id）不改写。
+    raw_journeys = algorithms.build_journeys(tp_rows, cv_rows)
+    links = identity_service.load_links(db)
+    journeys = algorithms.build_journeys(tp_rows, cv_rows, links) if links else raw_journeys
     summary = algorithms.summarize(journeys, codes)
+    before_summary = algorithms.summarize(raw_journeys, codes) if links else summary
 
     revenue = summary["revenue"]
     cost_by_code = {channel.code: float(channel.monthly_cost) for channel in channels}
@@ -192,6 +202,35 @@ def execute_run(db: Session, run: AttributionRun) -> AttributionRun:
             "max_delta": algorithms.MAX_DELTA,
             "brand_floor_share": algorithms.BRAND_FLOOR_SHARE,
         },
+        "identity": {
+            "links": len(links),
+            "merged": bool(links),
+            "before_users": before_summary["users"],
+            "before_touchpoints": before_summary["touchpoints"],
+            "before_conversion_rate": before_summary["conversion_rate"],
+            "before_last_click_share": before_summary["last_click_share"],
+            "before_markov_share": before_summary["markov_share"],
+            "after_users": summary["users"],
+            "after_touchpoints": summary["touchpoints"],
+            "after_conversion_rate": summary["conversion_rate"],
+            "merged_users": max(0, before_summary["users"] - summary["users"]),
+            "before_channels": [
+                {
+                    "code": code,
+                    "last_click_share": before_summary["last_click_share"].get(code, 0.0),
+                    "markov_share": before_summary["markov_share"].get(code, 0.0),
+                }
+                for code in codes
+            ],
+            "after_channels": [
+                {
+                    "code": code,
+                    "last_click_share": summary["last_click_share"].get(code, 0.0),
+                    "markov_share": summary["markov_share"].get(code, 0.0),
+                }
+                for code in codes
+            ],
+        },
     }
     run.metrics = metrics
     run.users_count = summary["users"]
@@ -204,8 +243,19 @@ def execute_run(db: Session, run: AttributionRun) -> AttributionRun:
     plan_text = ", ".join(
         "{name} {delta:+.2f}%".format(name=item["name"], delta=item["delta_pct"]) for item in plan
     )
+    identity_line = (
+        "身份合并：{links} 个设备关联，用户数 {before} → {after}（合并 {merged} 个匿名身份）".format(
+            links=len(links),
+            before=before_summary["users"],
+            after=summary["users"],
+            merged=max(0, before_summary["users"] - summary["users"]),
+        )
+        if links
+        else "身份合并：暂无设备关联，按原始 user_id 聚合"
+    )
     run.log_text = "\n".join(
         [
+            identity_line,
             "路径构建：{users} 用户 / {tp} 触点 / {cv} 转化".format(
                 users=summary["users"], tp=summary["touchpoints"], cv=summary["conversions"]
             ),

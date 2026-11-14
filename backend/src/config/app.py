@@ -18,11 +18,28 @@ from src.routes import api_router
 logger = logging.getLogger(f"{settings.app_name}.app")
 
 
+def _ensure_identity_columns() -> None:
+    """老库升级：create_all 不会给已存在的表补列，这里只补 identity 依赖的 device_id。"""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    for table in ("touchpoints", "conversions"):
+        if table not in inspector.get_table_names():
+            continue
+        columns = {column["name"] for column in inspector.get_columns(table)}
+        if "device_id" in columns:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN device_id VARCHAR(64)"))
+        logger.info("[MIGRATE] %s.device_id added", table)
+
+
 def _bootstrap_database() -> None:
     from src.models import Base  # noqa: WPS433 - 延迟导入避免循环
 
     wait_for_db()
     Base.metadata.create_all(bind=engine)
+    _ensure_identity_columns()
 
 
 def _run_seed_once() -> None:

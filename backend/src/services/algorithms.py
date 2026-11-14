@@ -28,20 +28,52 @@ MAX_PATH_LEN = 8
 # --------------------------------------------------------------------------
 # 路径构建
 # --------------------------------------------------------------------------
-def build_journeys(touchpoints: Iterable[dict], conversions: Iterable[dict]) -> list[dict]:
-    """把触点/转化明细整理成按用户聚合的路径。
+def resolve_subject(row: dict, links: dict[str, str] | None = None) -> str:
+    """归因主体：有 device -> member 关联时用会员号，否则沿用记录时的 user_id。
 
-    touchpoints: [{"user_id","channel_code","touched_at"}]
-    conversions: [{"user_id","amount"}]
+    links 为空表示按原始 user_id 聚合（合并前口径）；有 links 表示合并后口径。
+    历史明细始终保留 user_id / device_id 两个字段，可回查。
+    """
+    uid = str(row["user_id"])
+    device = row.get("device_id")
+    if links and device and device in links:
+        return str(links[device])
+    return uid
+
+
+def build_journeys(
+    touchpoints: Iterable[dict],
+    conversions: Iterable[dict],
+    links: dict[str, str] | None = None,
+) -> list[dict]:
+    """把触点/转化明细整理成按归因主体聚合的路径。
+
+    touchpoints: [{"user_id","channel_code","touched_at","device_id"?}]
+    conversions: [{"user_id","amount","device_id"?}]
+    links: device_id -> member_id（身份合并后的关联；None 表示合并前口径）
     返回: [{"user_id","path":[...],"converted":bool,"revenue":float}]，按 user_id 升序。
+
+    已建立合并关联的设备上，同一渠道、同一时刻的重复记录
+    （匿名会话与登录后 SDK 各记一次）只保留一条，避免合并后路径出现重复触点；
+    未建立关联的记录仍按原样保留（合并前口径不受影响）。
     """
     by_user: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    seen: set[tuple[str, str, str]] = set()
     for row in touchpoints:
-        by_user[str(row["user_id"])].append((str(row["touched_at"]), str(row["channel_code"])))
+        subject = resolve_subject(row, links)
+        device = str(row.get("device_id") or "")
+        stamp = str(row["touched_at"])
+        channel = str(row["channel_code"])
+        if device and links and device in links:
+            fingerprint = (device, channel, stamp)
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+        by_user[subject].append((stamp, channel))
     revenue: dict[str, float] = defaultdict(float)
     converted: set[str] = set()
     for row in conversions:
-        uid = str(row["user_id"])
+        uid = resolve_subject(row, links)
         converted.add(uid)
         revenue[uid] += float(row.get("amount") or 0.0)
 

@@ -15,6 +15,7 @@ router = APIRouter(prefix="/touchpoints", tags=["touchpoints"])
 def list_touchpoints(
     channel_id: int | None = None,
     user_id: str | None = None,
+    device_id: str | None = None,
     campaign: str | None = None,
     limit: int = Query(30),
     offset: int = Query(0),
@@ -26,6 +27,7 @@ def list_touchpoints(
         db,
         channel_id=channel_id,
         user_id=user_id,
+        device_id=device_id,
         campaign=campaign,
         limit=page.limit,
         offset=page.offset,

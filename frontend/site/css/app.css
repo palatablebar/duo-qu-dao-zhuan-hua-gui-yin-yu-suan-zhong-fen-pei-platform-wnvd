@@ -170,6 +170,7 @@ table.data th {
 }
 table.data td { border-bottom: 1px solid var(--rule); padding: 10px 12px 10px 0; vertical-align: top; }
 table.data tbody tr { cursor: pointer; transition: background 0.12s var(--ease); }
+.static-table table.data tbody tr { cursor: default; }
 table.data tbody tr:hover { background: var(--accent-wash); }
 table.data td.num { font-family: var(--font-mono); text-align: right; white-space: nowrap; }
 

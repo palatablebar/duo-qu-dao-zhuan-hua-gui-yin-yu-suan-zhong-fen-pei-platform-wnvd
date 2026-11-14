@@ -1,11 +1,18 @@
 """演示数据生成器（确定性，无随机源、无网络）。
 
 规模契约（batch-plan gb-608）：
-  5 渠道 / 2,400 用户 / 8,600 触点 / 640 转化 / 1 次归因运行 / 5 条 Attribution。
+  5 渠道 / 2,400 会员 / 8,600 触点 / 640 转化 / 1 次归因运行 / 5 条 Attribution。
+  其中 192 个会员有「匿名浏览 → 登录」两段身份（合并前 2,592 条路径）：
+  合并事件 192 条受理 + 1 条设备冲突 + 1 条非法事件失败。
 
 用户编号 1..2400，`index % 15 in {0,1,2,3}` 恰好 640 个转化用户（160 × 4）。
 路径由「转化路径原型 / 未转化路径原型」按权重轮转生成，触点总量不足 8600 时
 按用户轮询补齐重复触点（同一渠道的二次曝光），保证每次运行逐字一致。
+
+身份拆分（确定性）：
+  每个会员固定设备 DEV{index}；`index % 20 in {5,6}` 且路径长度 ≥ 2 的会员，
+  前半段触点记在匿名身份 AN{index} 名下，登录后同一设备继续记在 U{index} 名下。
+  合并事件把两者关联回 U{index}，因此合并后归因结果与拆分前逐字一致。
 """
 from __future__ import annotations
 
@@ -224,11 +231,27 @@ def build_dataset() -> dict:
 
     touchpoints: list[dict] = []
     conversions: list[dict] = []
+    merge_events: list[dict] = []
+    split_at_by_index: dict[int, int] = {}
     channel_counter: Counter = Counter()
     serial = 0
     for index in range(1, TOTAL_USERS + 1):
         path = paths[index]
         user_id = f"U{index:05d}"
+        device_id = f"DEV{index:05d}"
+        anonymous_user_id = f"AN{index:05d}"
+        split_at = len(path) // 2 if (index % 20 in (5, 6) and len(path) >= 2) else 0
+        split_at_by_index[index] = split_at
+        if split_at:
+            merge_events.append(
+                {
+                    "event_key": f"seed-im-{index:05d}",
+                    "device_id": device_id,
+                    "member_id": user_id,
+                    "anonymous_user_id": anonymous_user_id,
+                    "arrived_at": None,  # 路径生成后按首个会员触点时间回填
+                }
+            )
         day = 1 + (index * 3) % 30
         minute_base = 480 + (index * 7) % 540
         stamps: list[str] = []
@@ -241,7 +264,8 @@ def build_dataset() -> dict:
             channel_counter[channel] += 1
             touchpoints.append(
                 {
-                    "user_id": user_id,
+                    "user_id": anonymous_user_id if pos < split_at else user_id,
+                    "device_id": device_id,
                     "channel_code": channel,
                     "touched_at": stamp,
                     "cost": 0.0,
@@ -249,11 +273,14 @@ def build_dataset() -> dict:
                     "seed_key": f"tp-{serial:06d}",
                 }
             )
+        if split_at:
+            merge_events[-1]["arrived_at"] = stamps[split_at]
         if index in converted_users:
             amount = round(760 + (rng.below(1840) / 10.0) * 10, 2)
             conversions.append(
                 {
                     "user_id": user_id,
+                    "device_id": device_id,
                     "amount": amount,
                     "converted_at": stamps[-1],
                     "order_no": f"QY{PERIOD.replace('-', '')}{index:05d}",
@@ -272,10 +299,34 @@ def build_dataset() -> dict:
         residual = round(channel["monthly_cost"] - unit * len(rows), 2)
         rows[-1]["cost"] = round(rows[-1]["cost"] + residual, 2)
 
+    # 冲突与失败样例：同一设备后来绑定另一个会员（保留先到关联）、设备号非法（失败）。
+    split_indices = [idx for idx, at in split_at_by_index.items() if at]
+    first_split = min(split_indices) if split_indices else 6
+    merge_events.append(
+        {
+            "event_key": "seed-im-conflict-1",
+            "device_id": f"DEV{first_split:05d}",
+            "member_id": f"U{min(first_split + 1, TOTAL_USERS):05d}",
+            "anonymous_user_id": None,
+            "arrived_at": f"{PERIOD}-28T21:30:00",
+        }
+    )
+    merge_events.append(
+        {
+            "event_key": "seed-im-failed-1",
+            "device_id": "bad device!",
+            "member_id": "U00001",
+            "anonymous_user_id": None,
+            "arrived_at": f"{PERIOD}-28T21:35:00",
+        }
+    )
+
     return {
         "channels": CHANNELS,
         "touchpoints": touchpoints,
         "conversions": conversions,
+        "identity_events": merge_events,
+        "split_users": sum(1 for at in split_at_by_index.values() if at),
         "users": TOTAL_USERS,
         "converted_users": len(conversions),
         "period": PERIOD,
@@ -288,5 +339,5 @@ def build_dataset() -> dict:
 def expected_summary() -> str:
     return (
         f"SEED_SUMMARY brand={BRAND} users=3 sources={len(CHANNELS)} runs=1 "
-        f"findings={len(CHANNELS)} pending={len(CHANNELS)}"
+        f"findings={len(CHANNELS)} pending={len(CHANNELS)} merges=1 links=192 conflicts=1"
     )

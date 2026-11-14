@@ -10,6 +10,7 @@ DEMO_USERS = [
 ]
 
 SEED_RUN_KEY = "seed-run-202610"
+SEED_MERGE_KEY = "seed-identity-merge-202610"
 SEED_AUDIT = [
     ("seed-audit-1", "admin@mixcredit.io", "admin", "channel.update", "channel", {"code": "content", "budget": 180000}),
     ("seed-audit-2", "analyst@mixcredit.io", "analyst", "run.create", "attribution_run", {"period": "2026-10"}),

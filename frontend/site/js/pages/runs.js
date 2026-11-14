@@ -4,6 +4,12 @@ import { drawer, errorBox, errorMessage, esc, field, fmtMoney, fmtTime, kv, tabl
 
 const state = { status: '' };
 
+function identityNote(identity) {
+  if (!identity) return '—';
+  if (!identity.merged) return '未启用设备关联，按原始 user_id 聚合';
+  return `已合并 ${identity.links} 个设备关联：用户 ${identity.before_users} → ${identity.after_users}，触点 ${identity.before_touchpoints} → ${identity.after_touchpoints}`;
+}
+
 function openRun(view, ctx, run) {
   const metrics = run.metrics || {};
   const { root } = drawer({
@@ -18,6 +24,7 @@ function openRun(view, ctx, run) {
       ['结束', fmtTime(run.finished_at)],
       ['基准转化率', metrics.conversion_probability !== undefined ? `${(metrics.conversion_probability * 100).toFixed(2)}%` : '—'],
       ['平均路径', metrics.avg_path_length !== undefined ? Number(metrics.avg_path_length).toFixed(2) : '—'],
+      ['身份口径', identityNote(metrics.identity)],
     ])}
     <div class="section-title" style="margin-top:12px"><h2 style="font-size:0.95rem">口径占比</h2><span class="meta">markov / last-click / shapley</span></div>
     <pre class="code">${esc(JSON.stringify({ markov: metrics.markov_share, last_click: metrics.last_click_share, shapley: metrics.shapley_share }, null, 2))}</pre>

@@ -95,6 +95,7 @@ export const overviewPage = {
                   <dt>状态</dt><dd><span class="badge ${latest.status === 'success' ? 'ok' : 'warn'}">${esc(latest.status_label)}</span></dd>
                   <dt>口径</dt><dd>${esc(latest.model_label)}</dd>
                   <dt>输入</dt><dd>${latest.users_count} 用户 / ${latest.touchpoints_count} 触点</dd>
+                  <dt>身份合并</dt><dd>${latest.metrics && latest.metrics.identity && latest.metrics.identity.merged ? `已关联 ${latest.metrics.identity.links} 个设备 · 用户 ${latest.metrics.identity.before_users} → ${latest.metrics.identity.after_users}` : '未启用'}</dd>
                   <dt>开始</dt><dd>${fmtTime(latest.started_at)}</dd>
                   <dt>耗时</dt><dd>${latest.finished_at ? Math.max(1, Math.round((new Date(latest.finished_at) - new Date(latest.started_at)) / 1000)) + ' 秒' : '—'}</dd>
                   <dt>日志</dt><dd><pre class="code">${esc(latest.log_text || '（无）')}</pre></dd>

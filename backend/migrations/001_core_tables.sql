@@ -27,6 +27,7 @@ CREATE TABLE channels (
 CREATE TABLE touchpoints (
     id              INT AUTO_INCREMENT PRIMARY KEY,
     user_id         VARCHAR(16)  NOT NULL,
+    device_id       VARCHAR(64),
     channel_id      INT          NOT NULL,
     touched_at      DATETIME     NOT NULL,
     cost            DOUBLE       NOT NULL DEFAULT 0,
@@ -34,6 +35,7 @@ CREATE TABLE touchpoints (
     seed_key        VARCHAR(40)  UNIQUE,
     created_at      DATETIME     NOT NULL,
     INDEX ix_touchpoints_user (user_id),
+    INDEX ix_touchpoints_device (device_id),
     INDEX ix_touchpoints_channel (channel_id),
     INDEX ix_touchpoints_time (touched_at),
     CONSTRAINT fk_touchpoints_channel FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
@@ -42,12 +44,14 @@ CREATE TABLE touchpoints (
 CREATE TABLE conversions (
     id              INT AUTO_INCREMENT PRIMARY KEY,
     user_id         VARCHAR(16)  NOT NULL,
+    device_id       VARCHAR(64),
     amount          DOUBLE       NOT NULL DEFAULT 0,
     converted_at    DATETIME     NOT NULL,
     order_no        VARCHAR(40)  NOT NULL UNIQUE,
     seed_key        VARCHAR(40)  UNIQUE,
     created_at      DATETIME     NOT NULL,
-    INDEX ix_conversions_user (user_id)
+    INDEX ix_conversions_user (user_id),
+    INDEX ix_conversions_device (device_id)
 );
 
 CREATE TABLE attribution_runs (
@@ -107,4 +111,47 @@ CREATE TABLE audit_logs (
     ip              VARCHAR(64),
     seed_key        VARCHAR(120) UNIQUE,
     created_at      DATETIME     NOT NULL
+);
+
+-- 身份合并：一次受理批次、逐事件决定、当前生效的设备关联
+CREATE TABLE identity_merge_batches (
+    id                 INT AUTO_INCREMENT PRIMARY KEY,
+    batch_key          VARCHAR(120) UNIQUE,
+    operator_email     VARCHAR(160) NOT NULL,
+    source             VARCHAR(16)  NOT NULL DEFAULT 'manual',
+    note               TEXT,
+    total_events       INT          NOT NULL DEFAULT 0,
+    accepted_count     INT          NOT NULL DEFAULT 0,
+    conflict_count     INT          NOT NULL DEFAULT 0,
+    failed_count       INT          NOT NULL DEFAULT 0,
+    duplicate_count    INT          NOT NULL DEFAULT 0,
+    snapshot_before    JSON,        -- 受理前：users / touchpoints / conversion_rate / channel_breakdown
+    snapshot_after     JSON,        -- 受理后：同上
+    created_at         DATETIME     NOT NULL
+);
+
+CREATE TABLE identity_merge_events (
+    id                 INT AUTO_INCREMENT PRIMARY KEY,
+    batch_id           INT          NOT NULL,
+    event_key          VARCHAR(120) NOT NULL UNIQUE,  -- 重试幂等键
+    device_id          VARCHAR(64),
+    member_id          VARCHAR(64),
+    anonymous_user_id  VARCHAR(16),
+    arrived_at         DATETIME,
+    status             VARCHAR(16)  NOT NULL,           -- accepted / conflict / failed
+    reason             VARCHAR(48),
+    kept_member_id     VARCHAR(64),                     -- 冲突时保留的先到会员
+    kept_event_key     VARCHAR(120),                    -- 建立该关联的事件
+    touchpoint_count   INT          NOT NULL DEFAULT 0,
+    created_at         DATETIME     NOT NULL,
+    CONSTRAINT fk_identity_events_batch FOREIGN KEY (batch_id) REFERENCES identity_merge_batches(id) ON DELETE CASCADE
+);
+
+CREATE TABLE identity_links (
+    id                 INT AUTO_INCREMENT PRIMARY KEY,
+    device_id          VARCHAR(64)  NOT NULL UNIQUE,
+    member_id          VARCHAR(64)  NOT NULL,
+    first_event_key    VARCHAR(120) NOT NULL,
+    established_at     DATETIME,
+    created_at         DATETIME     NOT NULL
 );

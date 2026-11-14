@@ -14,6 +14,7 @@ def serialize_touchpoint(row: Touchpoint, channel: Channel | None) -> dict:
     return {
         "id": row.id,
         "user_id": row.user_id,
+        "device_id": row.device_id,
         "channel_id": row.channel_id,
         "channel_code": channel.code if channel else None,
         "channel_name": channel.name if channel else None,
@@ -28,6 +29,7 @@ def list_touchpoints(
     *,
     channel_id: int | None = None,
     user_id: str | None = None,
+    device_id: str | None = None,
     campaign: str | None = None,
     limit: int = 30,
     offset: int = 0,
@@ -37,6 +39,9 @@ def list_touchpoints(
     if channel_id:
         stmt = stmt.where(Touchpoint.channel_id == channel_id)
         count_stmt = count_stmt.where(Touchpoint.channel_id == channel_id)
+    if device_id:
+        stmt = stmt.where(Touchpoint.device_id == device_id.strip())
+        count_stmt = count_stmt.where(Touchpoint.device_id == device_id.strip())
     if user_id:
         like = f"%{user_id.strip()}%"
         stmt = stmt.where(Touchpoint.user_id.ilike(like))
@@ -60,6 +65,7 @@ def serialize_conversion(row: Conversion) -> dict:
     return {
         "id": row.id,
         "user_id": row.user_id,
+        "device_id": row.device_id,
         "amount": round(float(row.amount), 2),
         "converted_at": iso_utc(row.converted_at),
         "order_no": row.order_no,

@@ -9,6 +9,7 @@ from src.routes.channels import router as channels_router
 from src.routes.conversions import router as conversions_router
 from src.routes.exports import router as exports_router
 from src.routes.health import router as health_router
+from src.routes.identity import router as identity_router
 from src.routes.overview import router as overview_router
 from src.routes.touchpoints import router as touchpoints_router
 
@@ -17,6 +18,7 @@ api_router.include_router(health_router)
 api_router.include_router(auth_router)
 api_router.include_router(overview_router)
 api_router.include_router(channels_router)
+api_router.include_router(identity_router)
 api_router.include_router(touchpoints_router)
 api_router.include_router(conversions_router)
 api_router.include_router(attribution_runs_router)

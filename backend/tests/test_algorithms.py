@@ -133,3 +133,70 @@ def test_summarize_is_deterministic():
     assert first == second
     assert first["conversion_rate"] == pytest.approx(2 / 3)
     assert first["revenue"] == 150.0
+
+
+# --------------------------------------------------------------------------
+# 身份合并：device -> member 重建路径
+# --------------------------------------------------------------------------
+ANONYMOUS_AND_MEMBER = [
+    {"user_id": "anon-1", "device_id": "dev-1", "channel_code": "a", "touched_at": "2026-10-01T10:00:00"},
+    {"user_id": "anon-1", "device_id": "dev-1", "channel_code": "b", "touched_at": "2026-10-01T11:00:00"},
+    {"user_id": "m1", "device_id": "dev-1", "channel_code": "a", "touched_at": "2026-10-01T12:00:00"},
+]
+MEMBER_ORDERS = [{"user_id": "m1", "device_id": "dev-1", "amount": 80.0}]
+
+
+def test_identity_links_merge_anonymous_and_member_paths():
+    raw = algorithms.build_journeys(ANONYMOUS_AND_MEMBER, MEMBER_ORDERS)
+    assert [journey["user_id"] for journey in raw] == ["anon-1", "m1"]
+    assert raw[1]["path"] == ["a"] and raw[0]["converted"] is False
+
+    merged = algorithms.build_journeys(ANONYMOUS_AND_MEMBER, MEMBER_ORDERS, {"dev-1": "m1"})
+    assert len(merged) == 1
+    assert merged[0]["user_id"] == "m1"
+    assert merged[0]["path"] == ["a", "b", "a"]
+    assert merged[0]["converted"] is True
+
+
+def test_identity_merge_keeps_touchpoint_count_and_dedupes_duplicates():
+    rows = [
+        {"user_id": "anon-1", "device_id": "dev-1", "channel_code": "a", "touched_at": "2026-10-01T10:00:00"},
+        # 匿名会话与登录后 SDK 各记一次同设备同渠道同一时刻
+        {"user_id": "m1", "device_id": "dev-1", "channel_code": "a", "touched_at": "2026-10-01T10:00:00"},
+        {"user_id": "m1", "device_id": "dev-1", "channel_code": "b", "touched_at": "2026-10-01T11:00:00"},
+    ]
+    merged = algorithms.build_journeys(rows, MEMBER_ORDERS, {"dev-1": "m1"})
+    assert merged[0]["path"] == ["a", "b"]
+
+
+def test_identity_merge_never_drops_touchpoints():
+    merged = algorithms.build_journeys(ANONYMOUS_AND_MEMBER, MEMBER_ORDERS, {"dev-1": "m1"})
+    assert sum(len(journey["path"]) for journey in merged) == len(ANONYMOUS_AND_MEMBER)
+
+
+def test_identity_merge_is_noop_without_links():
+    assert algorithms.build_journeys(ANONYMOUS_AND_MEMBER, MEMBER_ORDERS) == algorithms.build_journeys(
+        ANONYMOUS_AND_MEMBER, MEMBER_ORDERS, {}
+    )
+
+
+def test_identity_merge_restores_full_path_and_channel_share():
+    # 匿名首触 + 会员末跳：合并前后 markov 与 last-click 都会变化，合并后路径才完整
+    rows = [
+        {"user_id": "anon-1", "device_id": "dev-1", "channel_code": "a", "touched_at": "2026-10-01T10:00:00"},
+        {"user_id": "m1", "device_id": "dev-1", "channel_code": "b", "touched_at": "2026-10-01T11:00:00"},
+        {"user_id": "m2", "device_id": "dev-2", "channel_code": "b", "touched_at": "2026-10-02T11:00:00"},
+    ]
+    orders = [
+        {"user_id": "m1", "device_id": "dev-1", "amount": 100.0},
+        {"user_id": "m2", "device_id": "dev-2", "amount": 100.0},
+    ]
+    before = algorithms.summarize(algorithms.build_journeys(rows, orders), ["a", "b"])
+    after = algorithms.summarize(algorithms.build_journeys(rows, orders, {"dev-1": "m1"}), ["a", "b"])
+    assert before["users"] == 3 and after["users"] == 2
+    assert before["conversions"] == after["conversions"] == 2
+    assert after["last_click_share"] == {"a": 0.0, "b": 1.0}
+    assert before["last_click_share"] == {"a": 0.0, "b": 1.0}
+    # 合并后 a 成为完整路径的首触，移除效应才会被识别
+    assert before["removal_effects"]["a"] == 0.0
+    assert after["removal_effects"]["a"] > 0.0
